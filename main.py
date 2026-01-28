@@ -10,7 +10,7 @@ import utils
 from PIL import Image
 
 # 1. 설정 및 초기화
-load_dotenv() # 로컬 개발용 .env 로드
+load_dotenv() 
 
 st.set_page_config(page_title="Nubi", page_icon="🧶", layout="wide")
 
@@ -18,9 +18,7 @@ st.markdown("""
 <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     * { font-family: 'Pretendard', sans-serif; }
-    
     [data-testid="stSidebar"] { background-color: #F8F9FA; border-right: 1px solid #E9ECEF; }
-    
     .hero-container {
         padding: 40px 20px;
         background: linear-gradient(135deg, #6C5CE7 0%, #a29bfe 100%);
@@ -32,7 +30,6 @@ st.markdown("""
     }
     .hero-title { font-size: 2.5rem; font-weight: 800; margin-bottom: 10px; }
     .hero-subtitle { font-size: 1.1rem; opacity: 0.9; }
-    
     div.stButton > button {
         width: 100%; height: 110px; border-radius: 16px;
         background: white; border: 1px solid #eee;
@@ -43,7 +40,6 @@ st.markdown("""
         border-color: #6C5CE7; color: #6C5CE7;
     }
     div.stButton > button p { font-size: 1.2rem; font-weight: bold; }
-    
     button[kind="primary"] {
         background-color: #6C5CE7 !important;
         border: none !important;
@@ -52,7 +48,6 @@ st.markdown("""
         padding: 10px 20px !important;
     }
     button[kind="primary"]:hover { background-color: #5a4ad1 !important; }
-
     .info-card {
         background: white; padding: 15px; border-radius: 12px;
         border: 1px solid #f0f0f0; margin-bottom: 10px;
@@ -61,7 +56,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. API 키 입력 받기 (사이드바) ---
 with st.sidebar:
     st.title("🧶 Nubi")
     st.caption("AI Travel Planner")
@@ -103,7 +97,7 @@ with st.sidebar:
     st.button("💰 예산 관리 (준비중)", disabled=True)
     st.button("✈️ 항공권 예약 (준비중)", disabled=True)
 
-# --- PAGE 1: 홈 ---
+# --- PAGE 1: Home ---
 if st.session_state['page'] == 'Home':
     st.markdown("""<div class="hero-container"><div class="hero-title">대한민국, 어디까지 가봤니?</div>
     <div class="hero-subtitle">Nubi가 당신의 취향에 딱 맞는 여행 코스를 단디 짜드립니다.</div></div>""", unsafe_allow_html=True)
@@ -153,7 +147,6 @@ if st.session_state['page'] == 'Home':
         
         with c2:
             json_places = json.dumps(places, ensure_ascii=False)
-            # [수정] autoload=false 및 callback 적용
             map_html = f"""
             <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
             <div id="map" style="width:100%;height:350px;border-radius:12px;"></div>
@@ -182,7 +175,7 @@ if st.session_state['page'] == 'Home':
             </script>"""
             components.html(map_html, height=370)
 
-# --- PAGE 2: AI 코스 설계 ---
+# --- PAGE 2: Course ---
 elif st.session_state['page'] == 'Course':
     city = st.session_state['selected_city']
     st.markdown(f"## 🎒 **{city}** 여행 설계")
@@ -200,12 +193,19 @@ elif st.session_state['page'] == 'Course':
     if generate:
         with st.spinner(f"🔍 {city}의 핫플레이스(카카오 데이터)를 수집하고, 맞춤형 코스를 설계 중입니다..."):
             coords = utils.CITY_COORDS.get(city, utils.CITY_COORDS["서울"])
+            
             weather_data = utils.get_weather_forecast(coords['lat'], coords['lng'], date_range[0], date_range[1], WEATHER_API_KEY)
             candidates = utils.fetch_candidate_places(city, theme, KAKAO_REST_API_KEY)
+            
+            # [디버깅] 여기서 utils 함수가 에러를 뿜으면 st.error가 작동함
             ai_result = utils.get_ai_course(OPEN_API_KEY, city, mbti, theme, age, weather_data, candidates)
-            st.session_state['result'] = ai_result
-            st.session_state['weather'] = weather_data
-            st.session_state['mbti_type'] = mbti
+            
+            if ai_result:
+                st.session_state['result'] = ai_result
+                st.session_state['weather'] = weather_data
+                st.session_state['mbti_type'] = mbti
+            else:
+                st.error("🤖 AI가 응답하지 않았습니다. (키 오류 또는 사용량 초과일 수 있습니다)")
 
     if 'result' in st.session_state and st.session_state['result']:
         res = st.session_state['result']
@@ -216,7 +216,6 @@ elif st.session_state['page'] == 'Course':
             st.caption("💡 지도 마커를 클릭하면 상세 정보(카카오맵)로 이동합니다.")
             all_schedules = res['schedule']; json_schedules = json.dumps(all_schedules, ensure_ascii=False)
             
-            # [핵심 수정] autoload=false 및 callback 적용으로 안정성 확보
             map_html = f"""
             <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
             <div id="map" style="width:100%;height:600px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
@@ -262,8 +261,10 @@ elif st.session_state['page'] == 'Course':
                         with col_info:
                             place_link = f"[{p['name']}]({p['url']})" if p.get('url') else p['name']
                             st.markdown(f"**{p.get('time', '00:00')} | {place_link}**")
+                            
                             if is_j: st.info(f"🚦 {p.get('transport', '이동 정보 없음')}")
                             else: st.caption(f"🚦 {p.get('transport', '이동 정보 없음')}")
+                                
                             if not is_j:
                                 alts = p.get('alternatives', [])
                                 if alts: 
@@ -273,7 +274,7 @@ elif st.session_state['page'] == 'Course':
                             st.write(f"📝 {p['desc']}")
                             st.divider()
 
-# --- PAGE 3: Nubi Log ---
+# --- PAGE 3: Log ---
 elif st.session_state['page'] == 'Log':
     st.markdown("## 📸 **Nubi Log**: 여행의 발자취")
     col_up, col_view = st.columns([1, 2])
