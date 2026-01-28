@@ -10,7 +10,7 @@ import utils
 from PIL import Image
 
 # 1. 설정 및 초기화
-load_dotenv() # 로컬 개발용 .env 로드 (배포시에는 없어도 무방)
+load_dotenv() # 로컬 개발용 .env 로드
 
 st.set_page_config(page_title="Nubi", page_icon="🧶", layout="wide")
 
@@ -68,18 +68,15 @@ with st.sidebar:
     
     with st.expander("🔑 API 키 설정", expanded=True):
         st.info("본인의 API 키를 입력해야 작동합니다.")
-        # .env에 값이 있으면 기본값으로 넣어줌 (개발 편의성)
         input_kakao_js = st.text_input("Kakao JS Key", value=os.getenv("KAKAO_API_KEY", ""), type="password")
         input_kakao_rest = st.text_input("Kakao REST Key", value=os.getenv("KAKAO_REST_API_KEY", ""), type="password")
         input_weather = st.text_input("OpenWeather Key", value=os.getenv("WEATHER_API_KEY", ""), type="password")
         input_openai = st.text_input("OpenAI Key", value=os.getenv("OPEN_API_KEY", ""), type="password")
 
-    # 키가 하나라도 없으면 중단
     if not (input_kakao_js and input_kakao_rest and input_weather and input_openai):
         st.warning("⚠️ 왼쪽 사이드바에서 모든 API 키를 입력해주세요.")
-        st.stop() # 여기서 코드 실행 중단
+        st.stop()
 
-    # 입력받은 키를 변수에 할당
     KAKAO_API_KEY = input_kakao_js
     KAKAO_REST_API_KEY = input_kakao_rest
     WEATHER_API_KEY = input_weather
@@ -129,7 +126,6 @@ if st.session_state['page'] == 'Home':
         st.markdown(f"### 👀 **{city}** 퀵 뷰")
         c1, c2 = st.columns([1, 1.5])
         
-        # [API 사용] 사용자 입력 키 사용
         with st.spinner("🔥 카카오맵 추천 인기 장소(맛집, 카페, 관광지) 분석 중..."):
             places = utils.fetch_top_places(city, KAKAO_REST_API_KEY)
 
@@ -156,32 +152,33 @@ if st.session_state['page'] == 'Home':
                 st.rerun()
         
         with c2:
-            # [API 사용] 사용자 입력 키 사용
             json_places = json.dumps(places, ensure_ascii=False)
-            # [핵심 수정] Mixed Content 해결을 위한 메타 태그 추가
+            # [수정] autoload=false 및 callback 적용
             map_html = f"""
             <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
             <div id="map" style="width:100%;height:350px;border-radius:12px;"></div>
-            <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}"></script>
+            <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}&autoload=false"></script>
             <script>
-                var mapContainer = document.getElementById('map'),
-                    mapOption = {{ center: new kakao.maps.LatLng({coords['lat']}, {coords['lng']}), level: 8 }};
-                var map = new kakao.maps.Map(mapContainer, mapOption);
-                var places = {json_places};
-                var bounds = new kakao.maps.LatLngBounds();
-                bounds.extend(new kakao.maps.LatLng({coords['lat']}, {coords['lng']}));
-                places.forEach(function(p) {{
-                    var pos = new kakao.maps.LatLng(p.lat, p.lng);
-                    bounds.extend(pos);
-                    var marker = new kakao.maps.Marker({{ position: pos, map: map }});
-                    var content = '<div style="padding:5px;font-size:11px;background:white;border:1px solid #ccc;border-radius:3px;">' + p.name + '</div>';
-                    var infowindow = new kakao.maps.InfoWindow({{ content: content }});
-                    infowindow.open(map, marker);
-                    kakao.maps.event.addListener(marker, 'click', function() {{
-                        if (p.url) {{ window.open(p.url, '_blank'); }}
+                kakao.maps.load(function() {{
+                    var mapContainer = document.getElementById('map'),
+                        mapOption = {{ center: new kakao.maps.LatLng({coords['lat']}, {coords['lng']}), level: 8 }};
+                    var map = new kakao.maps.Map(mapContainer, mapOption);
+                    var places = {json_places};
+                    var bounds = new kakao.maps.LatLngBounds();
+                    bounds.extend(new kakao.maps.LatLng({coords['lat']}, {coords['lng']}));
+                    places.forEach(function(p) {{
+                        var pos = new kakao.maps.LatLng(p.lat, p.lng);
+                        bounds.extend(pos);
+                        var marker = new kakao.maps.Marker({{ position: pos, map: map }});
+                        var content = '<div style="padding:5px;font-size:11px;background:white;border:1px solid #ccc;border-radius:3px;">' + p.name + '</div>';
+                        var infowindow = new kakao.maps.InfoWindow({{ content: content }});
+                        infowindow.open(map, marker);
+                        kakao.maps.event.addListener(marker, 'click', function() {{
+                            if (p.url) {{ window.open(p.url, '_blank'); }}
+                        }});
                     }});
+                    if (places.length > 0) {{ map.setBounds(bounds); }}
                 }});
-                if (places.length > 0) {{ map.setBounds(bounds); }}
             </script>"""
             components.html(map_html, height=370)
 
@@ -203,12 +200,9 @@ elif st.session_state['page'] == 'Course':
     if generate:
         with st.spinner(f"🔍 {city}의 핫플레이스(카카오 데이터)를 수집하고, 맞춤형 코스를 설계 중입니다..."):
             coords = utils.CITY_COORDS.get(city, utils.CITY_COORDS["서울"])
-            
-            # [API 사용] 사용자 입력 키 전달
             weather_data = utils.get_weather_forecast(coords['lat'], coords['lng'], date_range[0], date_range[1], WEATHER_API_KEY)
             candidates = utils.fetch_candidate_places(city, theme, KAKAO_REST_API_KEY)
             ai_result = utils.get_ai_course(OPEN_API_KEY, city, mbti, theme, age, weather_data, candidates)
-            
             st.session_state['result'] = ai_result
             st.session_state['weather'] = weather_data
             st.session_state['mbti_type'] = mbti
@@ -222,36 +216,38 @@ elif st.session_state['page'] == 'Course':
             st.caption("💡 지도 마커를 클릭하면 상세 정보(카카오맵)로 이동합니다.")
             all_schedules = res['schedule']; json_schedules = json.dumps(all_schedules, ensure_ascii=False)
             
-            # [핵심 수정] Mixed Content 해결을 위한 메타 태그 추가
+            # [핵심 수정] autoload=false 및 callback 적용으로 안정성 확보
             map_html = f"""
             <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
             <div id="map" style="width:100%;height:600px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
-            <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}"></script>
+            <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}&autoload=false"></script>
             <script>
-                var map = new kakao.maps.Map(document.getElementById('map'), {{ center: new kakao.maps.LatLng({coords['lat']}, {coords['lng']}), level: 7 }});
-                var schedules = {json_schedules};
-                var colors = ['#FF6B6B', '#4834d4', '#20bf6b', '#f0932b', '#eb4d4b'];
-                var bounds = new kakao.maps.LatLngBounds();
-                
-                schedules.forEach((day, i) => {{
-                    var path = [];
-                    var color = colors[i % colors.length];
-                    day.places.forEach((p, pi) => {{
-                        var pos = new kakao.maps.LatLng(p.lat, p.lng);
-                        path.push(pos);
-                        bounds.extend(pos);
-                        var content = '<div style="padding:5px;background:white;border:1px solid #ddd;border-radius:5px;font-size:11px;cursor:pointer;">' +
-                                      '<span style="color:'+color+';font-weight:bold;">Day'+day.day+'-'+(pi+1)+'</span> '+p.name+'</div>';
-                        var marker = new kakao.maps.Marker({{ position: pos, map: map }});
-                        var infowindow = new kakao.maps.InfoWindow({{ content: content }});
-                        infowindow.open(map, marker);
-                        kakao.maps.event.addListener(marker, 'click', function() {{
-                            if (p.url) {{ window.open(p.url, '_blank'); }}
+                kakao.maps.load(function() {{
+                    var map = new kakao.maps.Map(document.getElementById('map'), {{ center: new kakao.maps.LatLng({coords['lat']}, {coords['lng']}), level: 7 }});
+                    var schedules = {json_schedules};
+                    var colors = ['#FF6B6B', '#4834d4', '#20bf6b', '#f0932b', '#eb4d4b'];
+                    var bounds = new kakao.maps.LatLngBounds();
+                    
+                    schedules.forEach((day, i) => {{
+                        var path = [];
+                        var color = colors[i % colors.length];
+                        day.places.forEach((p, pi) => {{
+                            var pos = new kakao.maps.LatLng(p.lat, p.lng);
+                            path.push(pos);
+                            bounds.extend(pos);
+                            var content = '<div style="padding:5px;background:white;border:1px solid #ddd;border-radius:5px;font-size:11px;cursor:pointer;">' +
+                                          '<span style="color:'+color+';font-weight:bold;">Day'+day.day+'-'+(pi+1)+'</span> '+p.name+'</div>';
+                            var marker = new kakao.maps.Marker({{ position: pos, map: map }});
+                            var infowindow = new kakao.maps.InfoWindow({{ content: content }});
+                            infowindow.open(map, marker);
+                            kakao.maps.event.addListener(marker, 'click', function() {{
+                                if (p.url) {{ window.open(p.url, '_blank'); }}
+                            }});
                         }});
+                        new kakao.maps.Polyline({{ path: path, strokeWeight: 6, strokeColor: color, strokeOpacity: 0.8, strokeStyle: 'solid' }}).setMap(map);
                     }});
-                    new kakao.maps.Polyline({{ path: path, strokeWeight: 6, strokeColor: color, strokeOpacity: 0.8, strokeStyle: 'solid' }}).setMap(map);
+                    map.setBounds(bounds);
                 }});
-                map.setBounds(bounds);
             </script>
             """
             components.html(map_html, height=620)
@@ -266,10 +262,8 @@ elif st.session_state['page'] == 'Course':
                         with col_info:
                             place_link = f"[{p['name']}]({p['url']})" if p.get('url') else p['name']
                             st.markdown(f"**{p.get('time', '00:00')} | {place_link}**")
-                            
                             if is_j: st.info(f"🚦 {p.get('transport', '이동 정보 없음')}")
                             else: st.caption(f"🚦 {p.get('transport', '이동 정보 없음')}")
-                                
                             if not is_j:
                                 alts = p.get('alternatives', [])
                                 if alts: 
@@ -316,21 +310,22 @@ elif st.session_state['page'] == 'Log':
                 center_lat = photo_data[0]['lat']; center_lng = photo_data[0]['lng']
                 json_photos = json.dumps([{k:v for k,v in p.items() if k != 'file_obj'} for p in photo_data], ensure_ascii=False)
                 
-                # [핵심 수정] Mixed Content 해결을 위한 메타 태그 추가
+                # [수정] autoload=false 및 callback 적용
                 map_html = f"""
                 <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
                 <div id="map" style="width:100%;height:500px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
-                <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}"></script>
-                <style>.photo-marker {{ position: relative; width: 60px; height: 60px; border-radius: 50%; border: 3px solid white; box-shadow: 0 3px 6px rgba(0,0,0,0.3); background-size: cover; background-position: center; cursor: pointer; transition: transform 0.2s; }} .photo-marker:hover {{ transform: scale(1.2); z-index: 999; border-color: #6C5CE7; }}</style>
+                <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}&autoload=false"></script>
                 <script>
-                    var map = new kakao.maps.Map(document.getElementById('map'), {{ center: new kakao.maps.LatLng({center_lat}, {center_lng}), level: 9 }});
-                    var photos = {json_photos}; var bounds = new kakao.maps.LatLngBounds();
-                    photos.forEach(function(p) {{
-                        var pos = new kakao.maps.LatLng(p.lat, p.lng); bounds.extend(pos);
-                        var content = '<div class="photo-marker" style="background-image: url(' + p.img_src + ');"></div>';
-                        new kakao.maps.CustomOverlay({{ position: pos, content: content, yAnchor: 1 }}).setMap(map);
+                    kakao.maps.load(function() {{
+                        var map = new kakao.maps.Map(document.getElementById('map'), {{ center: new kakao.maps.LatLng({center_lat}, {center_lng}), level: 9 }});
+                        var photos = {json_photos}; var bounds = new kakao.maps.LatLngBounds();
+                        photos.forEach(function(p) {{
+                            var pos = new kakao.maps.LatLng(p.lat, p.lng); bounds.extend(pos);
+                            var content = '<div class="photo-marker" style="background-image: url(' + p.img_src + ');"></div>';
+                            new kakao.maps.CustomOverlay({{ position: pos, content: content, yAnchor: 1 }}).setMap(map);
+                        }});
+                        map.setBounds(bounds);
                     }});
-                    map.setBounds(bounds);
                 </script>"""
                 components.html(map_html, height=520)
 
