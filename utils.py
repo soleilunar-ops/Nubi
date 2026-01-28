@@ -4,6 +4,7 @@ import requests
 import math
 import random
 from openai import OpenAI
+import streamlit as st
 from datetime import datetime, timedelta
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -57,20 +58,14 @@ def get_weather_forecast(lat, lng, start_date, end_date, api_key):
             })
     return weather_info
 
-# --- [NEW] Page 1용: 카테고리별 실시간 Top 1 (총 3개) 수집 ---
+# --- Page 1용: 카테고리별 실시간 Top 1 (총 3개) 수집 ---
 def fetch_top_places(city, api_key):
-    """
-    Page 1 퀵뷰용 함수. '핫플레이스' 키워드를 사용하지 않고,
-    맛집(FD6), 카페(CE7), 관광지(AT4) 카테고리에서 각각 상위 1개를 가져와
-    다양성 있는 Top 3를 구성합니다.
-    """
     if not api_key: return []
     
-    # 다양성을 위해 3가지 카테고리 선정
     categories = [
-        ("FD6", "맛집"),       # 음식점
-        ("CE7", "카페"),       # 카페
-        ("AT4", "관광명소")    # 관광지
+        ("FD6", "맛집"), 
+        ("CE7", "카페"), 
+        ("AT4", "관광명소")
     ]
     
     results = []
@@ -78,7 +73,6 @@ def fetch_top_places(city, api_key):
     base_url = "https://dapi.kakao.com/v2/local/search/keyword.json"
     
     for code, keyword in categories:
-        # 카테고리 코드 기반 검색 + 정확도순(accuracy) = 카카오 추천 로직
         params = {
             "query": f"{city} {keyword}", 
             "category_group_code": code, 
@@ -92,8 +86,8 @@ def fetch_top_places(city, api_key):
                 results.append({
                     "name": doc['place_name'],
                     "category": doc['category_name'].split(">")[-1].strip(),
-                    "rating": round(random.uniform(4.0, 4.9), 1), # API 별점 미제공으로 시뮬레이션
-                    "reviews": random.randint(100, 2000),         # API 리뷰수 미제공으로 시뮬레이션
+                    "rating": round(random.uniform(4.0, 4.9), 1),
+                    "reviews": random.randint(100, 2000),
                     "url": doc['place_url'],
                     "lat": float(doc['y']),
                     "lng": float(doc['x'])
@@ -102,9 +96,9 @@ def fetch_top_places(city, api_key):
         
     return results
 
-# --- [NEW] 거리 계산 및 이동수단 판별 함수 (Haversine Algorithm) ---
+# --- 거리 계산 및 이동수단 판별 함수 ---
 def calculate_distance_time(lat1, lng1, lat2, lng2):
-    R = 6371  # 지구 반지름 (km)
+    R = 6371
     dLat = math.radians(lat2 - lat1)
     dLng = math.radians(lng2 - lng1)
     a = math.sin(dLat/2) * math.sin(dLat/2) + \
@@ -113,33 +107,36 @@ def calculate_distance_time(lat1, lng1, lat2, lng2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
     dist_km = R * c
     
-    # [수정 3] 이동 로직 (도보 vs 차량)
-    if dist_km <= 1.0: # 1km 이하는 도보 권장
-        # 도보 시속 4km 가정
+    if dist_km <= 1.0:
         minutes = int((dist_km / 4) * 60)
         return f"🚶 도보 약 {minutes}분 ({dist_km:.1f}km)"
     else:
-        # 차량 시속 30km 가정 (시내 주행 + 신호 대기 고려) + 기본 5분
         minutes = int((dist_km / 30) * 60) + 5
         return f"🚕 차량 약 {minutes}분 ({dist_km:.1f}km)"
 
-# --- 3. AI 코스 생성 (거리 계산 로직 추가) ---
+# --- 3. AI 코스 생성 (로직 강화) ---
 def fetch_candidate_places(city, theme, api_key):
     if not api_key: return []
     
-    keywords = []
-    if theme == "맛집/카페": keywords = ["맛집", "카페", "디저트"]
-    elif theme == "액티비티": keywords = ["테마파크", "체험", "액티비티", "레저"]
-    elif theme == "힐링": keywords = ["공원", "산책", "휴양림", "스파", "북카페"]
-    elif theme == "역사": keywords = ["박물관", "유적지", "문화재", "절"]
-    else: keywords = ["가볼만한곳"]
+    # [수정 1] 어떤 테마든 '맛집'과 '카페'는 기본으로 검색해서 후보군에 넣어야 함
+    base_keywords = ["맛집", "카페"]
+    theme_keywords = []
+    
+    if theme == "맛집/카페": theme_keywords = ["디저트", "베이커리", "브런치"]
+    elif theme == "액티비티": theme_keywords = ["테마파크", "체험", "액티비티", "레저"]
+    elif theme == "힐링": theme_keywords = ["공원", "산책", "휴양림", "스파", "북카페"]
+    elif theme == "역사": theme_keywords = ["박물관", "유적지", "문화재", "절"]
+    else: theme_keywords = ["가볼만한곳"]
+
+    # 기본 키워드와 테마 키워드 합치기
+    all_keywords = list(set(base_keywords + theme_keywords))
 
     candidates = []
     headers = {"Authorization": f"KakaoAK {api_key}"}
     base_url = "https://dapi.kakao.com/v2/local/search/keyword.json"
     
-    for kw in keywords:
-        params = {"query": f"{city} {kw}", "size": 10, "sort": "accuracy"}
+    for kw in all_keywords:
+        params = {"query": f"{city} {kw}", "size": 8, "sort": "accuracy"} # 사이즈 조절
         try:
             res = requests.get(base_url, headers=headers, params=params).json()
             for doc in res.get('documents', []):
@@ -157,32 +154,54 @@ def fetch_candidate_places(city, theme, api_key):
     return list(unique_candidates)
 
 def get_ai_course(openai_key, city, mbti, theme, age, weather_data, candidates):
+    if not openai_key:
+        st.error("🚨 OpenAI API 키가 입력되지 않았습니다.")
+        return None
+
     client = OpenAI(api_key=openai_key)
     weather_summary = "\n".join([f"- Day {i+1} ({d['date']}): {d['desc']} ({d['context']})" for i, d in enumerate(weather_data)])
     candidates_str = json.dumps([{"name": c['name'], "url": c['url'], "cat": c['category']} for c in candidates], ensure_ascii=False)
     
     persona = f"당신은 {age}를 위한 {theme} 전문 여행 가이드입니다."
-    if "20대" in age: persona += " 인스타 감성과 힙한 장소를 선호합니다."
-    elif "40대" in age: persona += " 편안하고 쾌적한 동선, 주차 편의성을 중시합니다."
     
-    style_prompt = ""
-    if "J" in mbti:
-        style_prompt = """
-        [J형] 시간 엄수(10:30 등). 동선 효율 고려. alternatives는 빈 리스트.
+    # [수정 2] 테마별 일정 구조 지침 강화
+    structure_prompt = ""
+    if theme == "맛집/카페":
+        structure_prompt = """
+        [일정 구성 패턴 - 맛집/카페 테마]
+        - 하루 동선을 반드시 다음 패턴에 가깝게 구성하세요:
+          **[식사 -> 카페 -> 관광 -> 식사 -> 카페 -> 관광]**
+        - 하루에 최소 2곳 이상의 맛집과 2곳 이상의 카페를 배치하세요.
+        - 유명한 디저트 카페나 베이커리를 우선 순위에 두세요.
         """
     else:
-        style_prompt = """
-        [P형] 시간은 러프하게. alternatives 필수 작성(후보군 중 가까운 곳 2개).
+        structure_prompt = """
+        [일정 구성 패턴 - 일반 테마]
+        - 메인 테마({theme}) 위주로 구성하되, 중간에 **반드시 맛집 1곳과 카페 1곳 이상**을 섞어서 배치하세요.
+        - 금강산도 식후경입니다. 배고프거나 지치지 않도록 적절한 타이밍에 식사와 휴식(카페)을 넣으세요.
         """
+
+    style_prompt = ""
+    if "J" in mbti:
+        style_prompt = "[J형] 시간 엄수(10:30 등). 동선 효율 고려. alternatives는 빈 리스트."
+    else:
+        style_prompt = "[P형] 시간은 러프하게. alternatives 필수 작성(후보군 중 가까운 곳 2개)."
 
     prompt = f"""
     {persona}
     여행지: 대한민국 {city}
     기간: {len(weather_data)}일
     날씨: {weather_summary}
-    [Candidate List] {candidates_str}
+    [Candidate List (사용 가능한 장소 목록)] 
+    {candidates_str}
     
-    [미션] Candidate List 내 장소로 코스 구성. 비오면 실내.
+    [미션] 
+    1. 위 'Candidate List'에 있는 장소들 중에서만 선택하여 여행 코스를 짜세요. 
+    2. 없는 장소를 지어내지 마세요.
+    3. 날씨를 고려하여 비가 오면 실내 위주로 배치하세요.
+    
+    {structure_prompt}
+    
     {style_prompt}
     
     [JSON Output Format]
@@ -209,12 +228,10 @@ def get_ai_course(openai_key, city, mbti, theme, age, weather_data, candidates):
         
         candidate_map = {c['name']: c for c in candidates}
         
-        # [데이터 후처리] 1. 좌표 매핑, 2. 정확한 거리 계산(Override), 3. 대안 장소 정제
         for day in course_data['schedule']:
             prev_lat, prev_lng = None, None
             
             for idx, place in enumerate(day['places']):
-                # [Fix] 대안 장소(alternatives) 안전 정제 (dict -> str)
                 if 'alternatives' in place and place['alternatives']:
                     clean_alts = []
                     for alt in place['alternatives']:
@@ -222,7 +239,6 @@ def get_ai_course(openai_key, city, mbti, theme, age, weather_data, candidates):
                         else: clean_alts.append(str(alt))
                     place['alternatives'] = clean_alts
 
-                # 좌표 매핑
                 matched = candidate_map.get(place['name'])
                 if not matched:
                     for c_name, c_data in candidate_map.items():
@@ -234,7 +250,6 @@ def get_ai_course(openai_key, city, mbti, theme, age, weather_data, candidates):
                 else:
                     place['lat'] = 0.0; place['lng'] = 0.0; place['url'] = ""
 
-                # [수정 3] 거리/시간 계산 로직 적용 (Override)
                 if idx == 0:
                     place['transport'] = "🏁 여행 시작"
                 else:
@@ -249,7 +264,7 @@ def get_ai_course(openai_key, city, mbti, theme, age, weather_data, candidates):
 
         return course_data
     except Exception as e:
-        print(f"Error: {e}")
+        st.error(f"🚨 AI 코스 생성 중 오류 발생: {e}")
         return None
 
 # --- 4. 이미지 처리 ---
