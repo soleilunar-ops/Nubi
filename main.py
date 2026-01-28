@@ -351,3 +351,4 @@ elif st.session_state['page'] == 'Log':
                         with st.container(border=True):
                             st.image(item['file_obj'], use_container_width=True)
                             st.caption(f"📅 {item['date']}")
+                            
