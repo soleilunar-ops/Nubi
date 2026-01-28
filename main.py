@@ -158,7 +158,9 @@ if st.session_state['page'] == 'Home':
         with c2:
             # [API 사용] 사용자 입력 키 사용
             json_places = json.dumps(places, ensure_ascii=False)
+            # [핵심 수정] Mixed Content 해결을 위한 메타 태그 추가
             map_html = f"""
+            <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
             <div id="map" style="width:100%;height:350px;border-radius:12px;"></div>
             <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}"></script>
             <script>
@@ -220,8 +222,9 @@ elif st.session_state['page'] == 'Course':
             st.caption("💡 지도 마커를 클릭하면 상세 정보(카카오맵)로 이동합니다.")
             all_schedules = res['schedule']; json_schedules = json.dumps(all_schedules, ensure_ascii=False)
             
-            # [API 사용] 사용자 입력 키 전달 (JS SDK)
+            # [핵심 수정] Mixed Content 해결을 위한 메타 태그 추가
             map_html = f"""
+            <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
             <div id="map" style="width:100%;height:600px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
             <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}"></script>
             <script>
@@ -312,8 +315,11 @@ elif st.session_state['page'] == 'Log':
                 st.subheader("🗺️ 추억 지도")
                 center_lat = photo_data[0]['lat']; center_lng = photo_data[0]['lng']
                 json_photos = json.dumps([{k:v for k,v in p.items() if k != 'file_obj'} for p in photo_data], ensure_ascii=False)
-                # [API 사용] 사용자 입력 키 전달
-                map_html = f"""<div id="map" style="width:100%;height:500px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
+                
+                # [핵심 수정] Mixed Content 해결을 위한 메타 태그 추가
+                map_html = f"""
+                <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+                <div id="map" style="width:100%;height:500px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
                 <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}"></script>
                 <style>.photo-marker {{ position: relative; width: 60px; height: 60px; border-radius: 50%; border: 3px solid white; box-shadow: 0 3px 6px rgba(0,0,0,0.3); background-size: cover; background-position: center; cursor: pointer; transition: transform 0.2s; }} .photo-marker:hover {{ transform: scale(1.2); z-index: 999; border-color: #6C5CE7; }}</style>
                 <script>
