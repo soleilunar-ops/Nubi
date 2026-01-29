@@ -114,29 +114,67 @@ def calculate_distance_time(lat1, lng1, lat2, lng2):
         minutes = int((dist_km / 30) * 60) + 5
         return f"🚕 차량 약 {minutes}분 ({dist_km:.1f}km)"
 
-# --- 3. AI 코스 생성 (로직 강화) ---
+# --- [수정] P성향을 위한 대안 장소 찾기 (Python 로직) ---
+def find_alternatives(target_place, all_candidates, used_names):
+    """
+    선택된 장소(target_place)와 같은 카테고리이면서,
+    가까운 거리에 있는 사용되지 않은 장소를 찾습니다.
+    """
+    alternatives = []
+    target_cat = target_place.get('category', '')
+    
+    # 카테고리 단순화 (매칭 확률 높이기 위함)
+    is_food = "음식점" in target_cat
+    is_cafe = "카페" in target_cat
+    
+    for cand in all_candidates:
+        if cand['name'] == target_place['name'] or cand['name'] in used_names:
+            continue
+            
+        # 카테고리 유사성 체크
+        cand_cat = cand.get('category', '')
+        match = False
+        if is_food and "음식점" in cand_cat: match = True
+        elif is_cafe and "카페" in cand_cat: match = True
+        elif not is_food and not is_cafe: # 관광지/기타의 경우
+             if target_cat.split(">")[0] == cand_cat.split(">")[0]: # 대분류가 같으면
+                 match = True
+        
+        if match:
+            # 거리 계산 (직선 거리)
+            dist = math.sqrt((target_place['lat'] - cand['lat'])**2 + (target_place['lng'] - cand['lng'])**2)
+            # 너무 멀지 않은 곳 (약 5km 이내, 좌표상 0.05 정도)
+            if dist < 0.05:
+                alternatives.append(cand)
+    
+    # 가까운 순 정렬 후 상위 2개 리턴
+    alternatives.sort(key=lambda x: (x['lat'] - target_place['lat'])**2 + (x['lng'] - target_place['lng'])**2)
+    
+    return [a['name'] for a in alternatives[:2]]
+
+# --- 후보군 수집 로직 ---
 def fetch_candidate_places(city, theme, api_key):
     if not api_key: return []
     
-    # [수정 1] 어떤 테마든 '맛집'과 '카페'는 기본으로 검색해서 후보군에 넣어야 함
-    base_keywords = ["맛집", "카페"]
-    theme_keywords = []
+    # 1. 필수 카테고리 (맛집, 카페, 관광지는 무조건 포함)
+    required_keywords = ["맛집", "카페", "가볼만한곳"] 
     
-    if theme == "맛집/카페": theme_keywords = ["디저트", "베이커리", "브런치"]
-    elif theme == "액티비티": theme_keywords = ["테마파크", "체험", "액티비티", "레저"]
-    elif theme == "힐링": theme_keywords = ["공원", "산책", "휴양림", "스파", "북카페"]
-    elif theme == "역사": theme_keywords = ["박물관", "유적지", "문화재", "절"]
-    else: theme_keywords = ["가볼만한곳"]
-
-    # 기본 키워드와 테마 키워드 합치기
-    all_keywords = list(set(base_keywords + theme_keywords))
-
+    # 2. 테마별 추가 키워드
+    theme_keywords = []
+    if theme == "맛집/카페": theme_keywords = ["디저트", "베이커리", "특색있는 식당"]
+    elif theme == "액티비티": theme_keywords = ["체험", "레저", "테마파크", "원데이클래스"]
+    elif theme == "힐링": theme_keywords = ["공원", "숲", "스파", "산책로", "서점"]
+    elif theme == "역사": theme_keywords = ["박물관", "유적지", "문화재"]
+    
+    # 중복 제거하여 검색할 키워드 확정
+    search_keywords = list(set(required_keywords + theme_keywords))
+    
     candidates = []
     headers = {"Authorization": f"KakaoAK {api_key}"}
     base_url = "https://dapi.kakao.com/v2/local/search/keyword.json"
     
-    for kw in all_keywords:
-        params = {"query": f"{city} {kw}", "size": 8, "sort": "accuracy"} # 사이즈 조절
+    for kw in search_keywords:
+        params = {"query": f"{city} {kw}", "size": 7, "sort": "accuracy"}
         try:
             res = requests.get(base_url, headers=headers, params=params).json()
             for doc in res.get('documents', []):
@@ -150,69 +188,73 @@ def fetch_candidate_places(city, theme, api_key):
                 })
         except: pass
     
+    # ID 기준 중복 제거
     unique_candidates = {v['id']: v for v in candidates}.values()
     return list(unique_candidates)
 
+# --- AI 코스 생성 로직 ---
 def get_ai_course(openai_key, city, mbti, theme, age, weather_data, candidates):
     if not openai_key:
-        st.error("🚨 OpenAI API 키가 입력되지 않았습니다.")
         return None
 
     client = OpenAI(api_key=openai_key)
-    weather_summary = "\n".join([f"- Day {i+1} ({d['date']}): {d['desc']} ({d['context']})" for i, d in enumerate(weather_data)])
-    candidates_str = json.dumps([{"name": c['name'], "url": c['url'], "cat": c['category']} for c in candidates], ensure_ascii=False)
+    weather_summary = "\n".join([f"- Day {i+1}: {d['desc']}" for i, d in enumerate(weather_data)])
     
-    persona = f"당신은 {age}를 위한 {theme} 전문 여행 가이드입니다."
+    candidates_lite = [{"name": c['name'], "cat": c['category']} for c in candidates]
+    candidates_str = json.dumps(candidates_lite, ensure_ascii=False)
     
-    # [수정 2] 테마별 일정 구조 지침 강화
-    structure_prompt = ""
+    # [슬롯 배치 최적화]
+    slot_instruction = ""
     if theme == "맛집/카페":
-        structure_prompt = """
-        [일정 구성 패턴 - 맛집/카페 테마]
-        - 하루 동선을 반드시 다음 패턴에 가깝게 구성하세요:
-          **[식사 -> 카페 -> 관광 -> 식사 -> 카페 ->술집]**
-        - 하루에 2곳의 맛집과 사이에 1곳의 관광지 그리고 2곳의 카페를 배치하세요.
-        - 유명한 디저트 카페나 베이커리를 우선 순위에 두세요.
+        slot_instruction = """
+        1. [식사] 맛집
+        2. [카페] 카페/디저트
+        3. [관광] 소화시킬 수 있는 가볼만한곳
+        4. [식사] 또 다른 맛집
+        5. [카페] 또 다른 카페
         """
     else:
-        structure_prompt = """
-        [일정 구성 패턴 - 일반 테마]
-        - 메인 테마({theme}) 위주로 구성하되, 중간에 **반드시 맛집 1곳과 카페 1곳 이상**을 섞어서 배치하세요.
-        - 금강산도 식후경입니다. 배고프거나 지치지 않도록 적절한 타이밍에 식사와 휴식(카페)을 넣으세요.
+        # [샌드위치 구조 유지]
+        slot_instruction = f"""
+        1. [테마] {theme} 관련 메인 명소
+        2. [식사] 근처 맛집
+        3. [카페] 휴식하기 좋은 카페
+        4. [테마] {theme} 관련 명소 2 (또는 체험)
+        5. [관광] 가볍게 산책하기 좋은 일반 관광지
         """
-
-    style_prompt = ""
-    if "J" in mbti:
-        style_prompt = "[J형] 시간 엄수(10:30 등). 동선 효율 고려. alternatives는 빈 리스트."
-    else:
-        style_prompt = "[P형] 시간은 러프하게. alternatives 필수 작성(후보군 중 가까운 곳 2개)."
 
     prompt = f"""
-    {persona}
-    여행지: 대한민국 {city}
-    기간: {len(weather_data)}일
-    날씨: {weather_summary}
-    [Candidate List (사용 가능한 장소 목록)] 
+    당신은 {age}를 위한 {theme} 전문 여행 가이드입니다.
+    여행지: {city}
+    일정: {len(weather_data)}일간
+    
+    [Available Places]
     {candidates_str}
+
+    [필수 미션 - Slot System]
+    각 날짜별로 **반드시 아래 순서(1번->5번)를 그대로 지켜서** 5개 장소를 선정하세요.
+    순서를 절대 임의로 바꾸지 마세요.
     
-    [미션] 
-    1. 위 'Candidate List'에 있는 장소들 중에서만 선택하여 여행 코스를 짜세요. 
-    2. 없는 장소를 지어내지 마세요.
-    3. 날씨를 고려하여 비가 오면 실내 위주로 배치하세요.
+    {slot_instruction}
+
+    [동선 최적화 지시]
+    장소를 고를 때, 1번부터 5번까지의 이동 경로가 너무 꼬이지 않도록
+    **지리적으로 가까운 장소들끼리 묶어서** 선정해주세요.
     
-    {structure_prompt}
-    
-    {style_prompt}
-    
-    [JSON Output Format]
+    [Output Format]
+    JSON Only.
     {{
-        "title": "제목", "description": "요약",
+        "title": "여행 제목",
         "schedule": [
-            {{ "day": 1, "date": "YYYY-MM-DD", "weather_note": "날씨",
-               "places": [
-                   {{ "time": "시간", "name": "장소명", "transport": "이동정보(나중에계산됨)", "desc": "설명", "alternatives": [] }}
-               ]
-            }}
+            {{
+                "day": 1, 
+                "weather_note": "날씨",
+                "places": [
+                    {{ "name": "장소명", "desc": "이유" }},
+                    ... (총 5개)
+                ]
+            }},
+            ...
         ]
     }}
     """
@@ -220,51 +262,74 @@ def get_ai_course(openai_key, city, mbti, theme, age, weather_data, candidates):
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "Output JSON only."}, {"role": "user", "content": prompt}],
-            temperature=0.7
+            messages=[
+                {"role": "system", "content": "You are a JSON generator. Respond strictly in JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5
         )
+        
         content = response.choices[0].message.content.replace("```json", "").replace("```", "")
         course_data = json.loads(content)
         
         candidate_map = {c['name']: c for c in candidates}
         
+        all_used_names = set()
         for day in course_data['schedule']:
-            prev_lat, prev_lng = None, None
-            
-            for idx, place in enumerate(day['places']):
-                if 'alternatives' in place and place['alternatives']:
-                    clean_alts = []
-                    for alt in place['alternatives']:
-                        if isinstance(alt, dict): clean_alts.append(alt.get('name', str(alt)))
-                        else: clean_alts.append(str(alt))
-                    place['alternatives'] = clean_alts
+            for p in day['places']:
+                all_used_names.add(p['name'])
 
-                matched = candidate_map.get(place['name'])
+        for day in course_data['schedule']:
+            mapped_places = []
+            for p in day['places']:
+                matched = candidate_map.get(p['name'])
                 if not matched:
                     for c_name, c_data in candidate_map.items():
-                        if place['name'] in c_name or c_name in place['name']:
-                            matched = c_data; place['name'] = c_name; break
+                        if p['name'] in c_name or c_name in p['name']:
+                            matched = c_data; p['name'] = c_name; break
                 
                 if matched:
-                    place['lat'] = matched['lat']; place['lng'] = matched['lng']; place['url'] = matched['url']
-                else:
-                    place['lat'] = 0.0; place['lng'] = 0.0; place['url'] = ""
+                    p.update(matched)
+                    mapped_places.append(p)
+            
+            # [수정됨] 거리 기반 재정렬 로직(optimize_route_order) 삭제
+            # AI가 정해준 슬롯 순서(식-카-관...)를 그대로 유지합니다.
+            optimized_places = mapped_places 
+            
+            final_places = []
+            prev_lat, prev_lng = None, None
+            
+            is_p_type = "P" in mbti 
 
-                if idx == 0:
-                    place['transport'] = "🏁 여행 시작"
+            for i, p in enumerate(optimized_places):
+                if i == 0:
+                    p['time'] = "10:00"
+                    p['transport'] = "🏁 일정 시작"
                 else:
-                    if prev_lat and prev_lng and place['lat'] != 0:
-                        real_transport = calculate_distance_time(prev_lat, prev_lng, place['lat'], place['lng'])
-                        place['transport'] = real_transport
+                    time_obj = datetime.strptime(final_places[-1]['time'], "%H:%M")
+                    next_time = time_obj + timedelta(hours=2) 
+                    p['time'] = next_time.strftime("%H:%M")
+                    
+                    if prev_lat:
+                        p['transport'] = calculate_distance_time(prev_lat, prev_lng, p['lat'], p['lng'])
                     else:
-                        place['transport'] = "이동 정보 계산 불가"
+                        p['transport'] = "이동 정보 없음"
                 
-                prev_lat = place['lat']
-                prev_lng = place['lng']
+                prev_lat, prev_lng = p['lat'], p['lng']
+                
+                if is_p_type:
+                    p['alternatives'] = find_alternatives(p, candidates, all_used_names)
+                else:
+                    p['alternatives'] = [] 
+                
+                final_places.append(p)
+                
+            day['places'] = final_places
 
         return course_data
+
     except Exception as e:
-        st.error(f"🚨 AI 코스 생성 중 오류 발생: {e}")
+        print(f"Error: {e}")
         return None
 
 # --- 4. 이미지 처리 ---

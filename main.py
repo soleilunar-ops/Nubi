@@ -197,7 +197,6 @@ elif st.session_state['page'] == 'Course':
             weather_data = utils.get_weather_forecast(coords['lat'], coords['lng'], date_range[0], date_range[1], WEATHER_API_KEY)
             candidates = utils.fetch_candidate_places(city, theme, KAKAO_REST_API_KEY)
             
-            # [디버깅] 여기서 utils 함수가 에러를 뿜으면 st.error가 작동함
             ai_result = utils.get_ai_course(OPEN_API_KEY, city, mbti, theme, age, weather_data, candidates)
             
             if ai_result:
@@ -216,36 +215,57 @@ elif st.session_state['page'] == 'Course':
             st.caption("💡 지도 마커를 클릭하면 상세 정보(카카오맵)로 이동합니다.")
             all_schedules = res['schedule']; json_schedules = json.dumps(all_schedules, ensure_ascii=False)
             
+            # [수정] 좌표 방어 로직이 추가된 자바스크립트
             map_html = f"""
             <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
             <div id="map" style="width:100%;height:600px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
             <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_API_KEY}&autoload=false"></script>
             <script>
                 kakao.maps.load(function() {{
-                    var map = new kakao.maps.Map(document.getElementById('map'), {{ center: new kakao.maps.LatLng({coords['lat']}, {coords['lng']}), level: 7 }});
+                    var mapContainer = document.getElementById('map'),
+                        mapOption = {{ center: new kakao.maps.LatLng({coords['lat']}, {coords['lng']}), level: 7 }};
+                    var map = new kakao.maps.Map(mapContainer, mapOption);
+                    
                     var schedules = {json_schedules};
                     var colors = ['#FF6B6B', '#4834d4', '#20bf6b', '#f0932b', '#eb4d4b'];
                     var bounds = new kakao.maps.LatLngBounds();
-                    
+                    var markerCount = 0; // 유효한 마커 개수 카운트
+
                     schedules.forEach((day, i) => {{
                         var path = [];
                         var color = colors[i % colors.length];
+                        
                         day.places.forEach((p, pi) => {{
+                            // [핵심 수정] 좌표가 0이거나 유효하지 않으면 건너뜀 (지도가 깨지는 원인 차단)
+                            if (!p.lat || !p.lng || p.lat === 0 || p.lng === 0) return;
+
                             var pos = new kakao.maps.LatLng(p.lat, p.lng);
                             path.push(pos);
                             bounds.extend(pos);
-                            var content = '<div style="padding:5px;background:white;border:1px solid #ddd;border-radius:5px;font-size:11px;cursor:pointer;">' +
+                            markerCount++;
+
+                            var content = '<div style="padding:5px;background:white;border:1px solid #ddd;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap;">' +
                                           '<span style="color:'+color+';font-weight:bold;">Day'+day.day+'-'+(pi+1)+'</span> '+p.name+'</div>';
+                            
                             var marker = new kakao.maps.Marker({{ position: pos, map: map }});
                             var infowindow = new kakao.maps.InfoWindow({{ content: content }});
                             infowindow.open(map, marker);
+                            
                             kakao.maps.event.addListener(marker, 'click', function() {{
                                 if (p.url) {{ window.open(p.url, '_blank'); }}
                             }});
                         }});
-                        new kakao.maps.Polyline({{ path: path, strokeWeight: 6, strokeColor: color, strokeOpacity: 0.8, strokeStyle: 'solid' }}).setMap(map);
+                        
+                        // 유효한 경로가 2개 이상일 때만 선 그리기
+                        if (path.length > 1) {{
+                            new kakao.maps.Polyline({{ path: path, strokeWeight: 6, strokeColor: color, strokeOpacity: 0.8, strokeStyle: 'solid' }}).setMap(map);
+                        }}
                     }});
-                    map.setBounds(bounds);
+
+                    // [핵심 수정] 유효한 마커가 있을 때만 지도 범위 재설정
+                    if (markerCount > 0) {{
+                        map.setBounds(bounds);
+                    }}
                 }});
             </script>
             """
@@ -311,7 +331,6 @@ elif st.session_state['page'] == 'Log':
                 center_lat = photo_data[0]['lat']; center_lng = photo_data[0]['lng']
                 json_photos = json.dumps([{k:v for k,v in p.items() if k != 'file_obj'} for p in photo_data], ensure_ascii=False)
                 
-                # [수정] autoload=false 및 callback 적용
                 map_html = f"""
                 <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
                 <div id="map" style="width:100%;height:500px;border-radius:15px;box-shadow:0 4px 10px rgba(0,0,0,0.1);"></div>
